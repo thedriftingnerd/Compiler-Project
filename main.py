@@ -63,7 +63,13 @@ class Var(Node):
 class Assign(Node):
     def __init__(self, name, expr):
         self.name, self.expr = name, expr
-        
+class Print(Node):
+    def __init__(self, expr):
+        self.expr = expr        
+class If(Node):
+    def __init__(self, condition, body):
+        self.condition, self.body = condition, body
+
 #Parser
 
 #Interpreter
