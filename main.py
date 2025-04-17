@@ -71,5 +71,10 @@ class If(Node):
         self.condition, self.body = condition, body
 
 #Parser
-
+class Parser:
+    def __init__(self, tokens):
+        self.tokens = tokens 
+        self.pos = 0
+        
 #Interpreter
+class Interpreter:
