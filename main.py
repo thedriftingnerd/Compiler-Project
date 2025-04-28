@@ -1,125 +1,126 @@
 import re
 import keyword
+import subprocess
 
-#Lexer
+# Lexer definitions
 KEYWORDS = set(keyword.kwlist)
 OPERATORS = sorted([
     '**=', '//=', '==', '!=', '<=', '>=', '**', '//',
     '+=', '-=', '*=', '/=', '%=', '=', '<', '>', '+', '-', '*', '/', '%',
     'and', 'or', 'not', 'is', 'in'
 ], key=lambda x: -len(x))
-DELIMITERS = {'(', ')', '[', ']', '{', '}', ':', ',', '.', ';', '@'}
 
-def is_keyword(token):
-    return token in KEYWORDS
-
-def is_operator(token):
-    return token in OPERATORS
-
+# Tokenizer
 def tokenise_python_code(line):
     line = re.sub(r'#.*', '', line)
-    token_specification = [
-        ('STRING',   r'(\".*?\"|\'.*?\')'),
+    token_spec = [
+        ('STRING',   r'(".*?"|\'.*?\')'),
         ('FLOAT',    r'[+-]?(\d+\.\d*|\.\d+)'),
         ('INTEGER',  r'[+-]?\d+'),
-        ('IDENTIFIER', r'[A-Za-z_][A-Za-z_0-9]*'),
-        ('OPERATOR', '|'.join(map(re.escape, OPERATORS))),
-        ('DELIMITER', r'[()\[\]{}:;,\.@]'),
+        ('IDENT',    r'[A-Za-z_][A-Za-z0-9_]*'),
+        ('OP',       '|'.join(map(re.escape, OPERATORS))),
         ('SKIP',     r'\s+'),
         ('MISMATCH', r'.'),
     ]
-    tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification)
+    tok_regex = '|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_spec)
     tokens = []
-
     for mo in re.finditer(tok_regex, line):
-        kind = mo.lastgroup
-        value = mo.group()
-
+        kind, val = mo.lastgroup, mo.group()
         if kind == 'SKIP':
             continue
-        elif kind == 'IDENTIFIER' and is_keyword(value):
-            tokens.append((value, 'KEYWORD'))
-        elif kind == 'IDENTIFIER' and is_operator(value):
-            tokens.append((value, 'OPERATOR'))
-        else:
-            tokens.append((value, kind))
-
+        if kind == 'IDENT':
+            if val in KEYWORDS:
+                kind = 'KEYWORD'
+            elif val in OPERATORS:
+                kind = 'OP'
+        tokens.append((val, kind))
     return tokens
 
-#Syntax tree nodes
-class Node: pass
-class Number(Node):
-    def __init__(self, value):
-        self.value = int(value)
-class String(Node):
-    def __init__(self, value):
-        self.value = value.strip('"').strip('"')
-class BinOp(Node):
-    def __init__(self, left, op, right):
-        self.value = self.left, self.op, self.right = left, op, right
-class Var(Node):
-    def __init__(self, name):
-        self.name = self.name = name
-class Assign(Node):
-    def __init__(self, name, expr):
-        self.name, self.expr = name, expr
-class Print(Node):
-    def __init__(self, expr):
-        self.expr = expr        
-class If(Node):
-    def __init__(self, condition, body):
-        self.condition, self.body = condition, body
+# AST nodes
+class Node:
+    pass
 
-#Parser
+class Number(Node):
+    def __init__(self, v):
+        self.value = int(v)
+
+class String(Node):
+    def __init__(self, v):
+        self.value = v[1:-1]
+
+class Var(Node):
+    def __init__(self, n):
+        self.name = n
+
+class BinOp(Node):
+    def __init__(self, l, o, r):
+        self.left, self.op, self.right = l, o, r
+
+class Assign(Node):
+    def __init__(self, n, e):
+        self.name, self.expr = n, e
+
+class Print(Node):
+    def __init__(self, e):
+        self.expr = e
+
+class If(Node):
+    def __init__(self, c, b):
+        self.cond, self.body = c, b
+
+# Parser
 class Parser:
     def __init__(self, tokens):
-        self.tokens = tokens
+        self.toks = tokens
         self.pos = 0
 
-    def peek(self): return self.tokens[self.pos] if self.pos < len(self.tokens) else (None, None)
-    def advance(self): self.pos += 1
+    def peek(self):
+        return self.toks[self.pos] if self.pos < len(self.toks) else (None, None)
 
-    def expect(self, value):  # ensures current token == value
-        tok, typ = self.peek()
-        if tok != value:
-            raise SyntaxError(f"Expected '{value}' but got '{tok}'")
+    def advance(self):
+        self.pos += 1
+
+    def expect(self, val):
+        t, _ = self.peek()
+        if t != val:
+            raise SyntaxError(f"Expected {val}, got {t}")
         self.advance()
-    
-    def parse(self):
-        ast = []
-        while self.pos < len(self.tokens):
-            ast.append(self.statement())
-        return ast
 
-    def statement(self):
-        tok, typ = self.peek()
-        if tok == 'print':
+    def parse(self):
+        stmts = []
+        while self.pos < len(self.toks):
+            stmts.append(self.stmt())
+        return stmts
+
+    def stmt(self):
+        t, typ = self.peek()
+        if t == 'print':
             self.advance()
             self.expect('(')
-            expr = self.expr()
+            e = self.expr()
             self.expect(')')
-            return Print(expr)
-        elif typ == 'IDENTIFIER':
-            name = tok
+            return Print(e)
+        if typ == 'IDENT':
+            name = t
             self.advance()
             self.expect('=')
-            expr = self.expr()
-            return Assign(name, expr)
-        elif tok == 'if':
+            e = self.expr()
+            return Assign(name, e)
+        if t == 'if':
             self.advance()
             cond = self.expr()
             self.expect(':')
-            # Assume single statement body for simplicity
-            return If(cond, self.statement())
-        else:
-            raise SyntaxError(f"Unexpected token: {tok}")
+            body = self.stmt()
+            return If(cond, body)
+        raise SyntaxError(f"Unexpected {t}")
 
     def expr(self):
         node = self.term()
         while self.peek()[0] in ('+', '-'):
             op = self.peek()[0]
             self.advance()
-            node = BinOp(node, op, self.term())
+            right = self.term()
+            node = BinOp(node, op, right)
         return node
 
     def term(self):
@@ -127,79 +128,90 @@ class Parser:
         while self.peek()[0] in ('*', '/', '%'):
             op = self.peek()[0]
             self.advance()
-            node = BinOp(node, op, self.factor())
+            right = self.factor()
+            node = BinOp(node, op, right)
         return node
 
     def factor(self):
-        tok, typ = self.peek()
+        t, typ = self.peek()
         if typ == 'INTEGER':
             self.advance()
-            return Number(tok)
-        elif typ == 'STRING':
+            return Number(t)
+        if typ == 'STRING':
             self.advance()
-            return String(tok)
-        elif typ == 'IDENTIFIER':
+            return String(t)
+        if typ == 'IDENT':
             self.advance()
-            return Var(tok)
-        elif tok == '(':
+            return Var(t)
+        if t == '(':
             self.advance()
             node = self.expr()
             self.expect(')')
             return node
-        else:
-            raise SyntaxError(f"Unexpected factor: {tok}")
+        raise SyntaxError(f"Unexpected factor {t}")
 
-#Interpreter
-class Interpreter:
-    def __init__(self): self.env = {}
+# C code generator
+class CGen:
+    def __init__(self):
+        self.lines = []
 
-    def eval(self, node):
-        if isinstance(node, Number): return node.value
-        elif isinstance(node, String): return node.value
-        elif isinstance(node, Var): return self.env.get(node.name, None)
-        elif isinstance(node, BinOp):
-            left = self.eval(node.left)
-            right = self.eval(node.right)
-            return self.apply_op(node.op, left, right)
-        elif isinstance(node, Assign):
-            val = self.eval(node.expr)
-            self.env[node.name] = val
+    def gen(self, stmts):
+        self.lines = ['#include <stdio.h>', '', 'int main() {']
+        for s in stmts:
+            self.emit(s)
+        self.lines.append('    return 0;')
+        self.lines.append('}')
+        return '\n'.join(self.lines)
+
+    def emit(self, node):
+        if isinstance(node, Assign):
+            expr = self.e(node.expr)
+            self.lines.append(f'    int {node.name} = {expr};')
         elif isinstance(node, Print):
-            print(self.eval(node.expr))
+            expr = self.e(node.expr)
+            self.lines.append(f'    printf("%d\\n", {expr});')
         elif isinstance(node, If):
-            if self.eval(node.condition):
-                self.eval(node.body)
+            cond = self.e(node.cond)
+            self.lines.append(f'    if ({cond}) {{')
+            self.emit(node.body)
+            self.lines.append('    }')
 
-    def apply_op(self, op, l, r):
-        if op == '+': return l + r
-        if op == '-': return l - r
-        if op == '*': return l * r
-        if op == '/': return l // r
-        if op == '%': return l % r
-        raise RuntimeError(f"Unsupported operator {op}")
+    def e(self, node):
+        if isinstance(node, Number):
+            return str(node.value)
+        if isinstance(node, Var):
+            return node.name
+        if isinstance(node, BinOp):
+            left = self.e(node.left)
+            right = self.e(node.right)
+            return f'({left} {node.op} {right})'
+        return '0'
 
-#---------------
-#Runner
-def run_interpreter(source_lines):
-    interpreter = Interpreter()
-    for line_num, line in enumerate(source_lines, 1):
+# Runner
+def run_py2c(source):
+    toks, errs = [], []
+    for i, ln in enumerate(source, 1):
         try:
-            tokens = tokenise_python_code(line)
-            parser = Parser(tokens)
-            ast = parser.parse()
-            for node in ast:
-                interpreter.eval(node)
+            toks.extend(tokenise_python_code(ln))
         except Exception as e:
-            print(f"Syntax error on line {line_num}: {e}")
+            errs.append(f'Line {i}: {e}')
+    stmts = Parser(toks).parse()
+    c_code = CGen().gen(stmts)
+    with open('output.c', 'w') as f:
+        f.write(c_code)
+    try:
+        subprocess.run(['gcc', '-S', 'output.c', '-o', 'output.s'], check=True)
+        print('Wrote output.c and output.s')
+    except subprocess.CalledProcessError as e:
+        print('GCC failed:', e)
+    for err in errs:
+        print(err)
 
-#---------------
-#Sample to test with
-if __name__ == "__main__":
-    code = [
+if __name__ == '__main__':
+    sample = [
         'x = 10',
         'y = 20',
         'print(x + y)',
-        'if x: print("X is not zero")',
-        'print("Done")'
+        'if x: print("X")'
     ]
-    run_interpreter(code)
+    run_py2c(sample)
