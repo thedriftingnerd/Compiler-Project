@@ -189,6 +189,8 @@ def run_py2c(source): #tokenise, parse, generate C, and then invoke GCC to produ
         subprocess.run(['gcc', '-S', 'output.c', '-o', 'output.s'], check=True)
         print('Wrote output.c and output.s')
     except subprocess.CalledProcessError as e: print('GCC failed:', e)
+    interp = Interpreter()
+    for node in statements: interp.eval(node)
 
 if __name__ == '__main__':
     sample = [
